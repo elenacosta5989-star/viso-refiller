@@ -75,7 +75,7 @@ const sumQty = (q) => Object.values(q).reduce((a, n) => a + n, 0);
 
 /* ============ Stato del refill ============ */
 let R = null; // { fridge, phase, q:{sku:n}, photo }
-const newRefill = (fridge) => ({ fridge, phase: 'unlocking', list: [...DEFAULT_LIST], q: Object.fromEntries(DEFAULT_LIST.map((s) => [s.sku, 0])), photo: null, total: '', filter: '' });
+const newRefill = (fridge) => ({ fridge, phase: 'unlocking', list: [...DEFAULT_LIST], q: Object.fromEntries(DEFAULT_LIST.map((s) => [s.sku, 0])), photo: null, total: '', filter: '', mode: 'add', rm: Object.fromEntries(DEFAULT_LIST.map((s) => [s.sku, 0])) });
 
 /* ============ Schermate ============ */
 // 1. Intro
@@ -166,14 +166,21 @@ function startRefill(fridge) {
 function setPhase(p) { R.phase = p; drawRefill(); }
 const endBtn = '<button class="btn ghost" id="end">Fine Refill</button>';
 
+// totali: inseriti (+) e rimossi (−)
+const totHtml = () => `<span class="mint">+${sumQty(R.q)}</span> <span class="neg">−${sumQty(R.rm)}</span>`;
+const otherTag = (sku) => R.mode === 'rm' ? (R.q[sku] ? `<span class="pos">Inseriti +${R.q[sku]}</span>` : '') : (R.rm[sku] ? `Rimossi −${R.rm[sku]}` : '');
+const segBar = () => `<div class="seg"><button data-mode="add" class="${R.mode === 'add' ? 'on' : ''}">Aggiungi</button><button data-mode="rm" class="${R.mode === 'rm' ? 'on' : ''}">Rimuovi</button></div>`;
 function qtyRow(s) {
-  return `<div class="card sku"><img class="pimg" src="${esc(imgOf(s))}" alt="" loading="lazy" onerror="this.onerror=null;this.src=thumb('${esc(s.name).replace(/'/g, '')}','${esc(s.cat)}')"><div class="pn"><div class="n">${esc(s.name)}</div><div class="c">${s.sku} · ${esc(s.cat)}</div></div>
-    <div class="qty"><button data-m="${s.sku}" aria-label="Meno">−</button><b id="q-${s.sku}">${R.q[s.sku]}</b><button class="p" data-p="${s.sku}" aria-label="Più">+</button></div></div>`;
+  const neg = R.mode === 'rm' ? ' neg' : '', v = (R.mode === 'rm' ? R.rm : R.q)[s.sku];
+  return `<div class="card sku"><img class="pimg" src="${esc(imgOf(s))}" alt="" loading="lazy" onerror="this.onerror=null;this.src=thumb('${esc(s.name).replace(/'/g, '')}','${esc(s.cat)}')"><div class="pn"><div class="n">${esc(s.name)}</div><div class="c">${s.sku} · ${esc(s.cat)}</div><div class="tag2" id="o-${s.sku}">${otherTag(s.sku)}</div></div>
+    <div class="qty"><button data-m="${s.sku}" aria-label="Meno">−</button><b id="q-${s.sku}" class="${neg}">${v}</b><button class="p${neg}" data-p="${s.sku}" aria-label="Più">+</button></div></div>`;
 }
 function bindQty() {
-  const upd = (sku) => { $('#q-' + sku).textContent = R.q[sku]; const t = $('#tot'); if (t) t.textContent = sumQty(R.q); };
-  document.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => { R.q[b.dataset.p]++; upd(b.dataset.p); });
-  document.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { R.q[b.dataset.m] = Math.max(0, R.q[b.dataset.m] - 1); upd(b.dataset.m); });
+  const cur = () => (R.mode === 'rm' ? R.rm : R.q);
+  const upd = (sku) => { $('#q-' + sku).textContent = cur()[sku]; $('#o-' + sku).innerHTML = otherTag(sku); const t = $('#tot'); if (t) t.innerHTML = totHtml(); };
+  document.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => { cur()[b.dataset.p]++; upd(b.dataset.p); });
+  document.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { cur()[b.dataset.m] = Math.max(0, cur()[b.dataset.m] - 1); upd(b.dataset.m); });
+  document.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => { R.mode = b.dataset.mode; const y = window.scrollY; drawRefill(); window.scrollTo(0, y); });
 }
 
 function drawRefill() {
@@ -190,8 +197,8 @@ function drawRefill() {
     $('#cont').onclick = () => setPhase('loading'); setTimeout(() => R && R.phase === 'opened' && setPhase('loading'), 1600);
   } else if (ph === 'loading') {
     render(`<div class="screen">${head()}<div class="top"><span class="status"><i class="dot"></i>PORTA APERTA</span><button class="demo" id="sim">DEMO · chiudi porta</button></div>
-      <h1 style="font-size:20px">Metti i prodotti nel frigo, poi seleziona quanti prodotti aggiungi e vai su <span class="mint">Fine Refill</span></h1>${name}
-      ${R.list.map(qtyRow).join('')}<button class="btn ghost" id="addp">+ Aggiungi prodotto</button><div class="sum"><span>Totale pezzi</span><span class="mint" id="tot">${sumQty(R.q)}</span></div></div>
+      <h1 style="font-size:20px">Metti i prodotti nel frigo, poi seleziona quanti prodotti aggiungi o rimuovi e vai su <span class="mint">Fine Refill</span></h1>${name}
+      ${segBar()}${R.list.map(qtyRow).join('')}<button class="btn ghost" id="addp">+ Aggiungi prodotto</button><div class="sum"><span>Totale pezzi</span><span id="tot">${totHtml()}</span></div></div>
       <div class="bar">${endBtn}</div>`);
     bindQty(); $('#addp').onclick = addSheet; $('#sim').onclick = () => api.simulateDoorClose();
   } else if (ph === 'info') {
@@ -208,18 +215,18 @@ function drawRefill() {
   } else if (ph === 'review') {
     const q = R.filter.toLowerCase(), rows = R.list.filter((s) => (s.name + s.sku + s.cat).toLowerCase().includes(q));
     render(`<div class="screen" style="padding-top:0"><div class="searchbar">${head()}<input id="sq" placeholder="SKU, nome prodotto, …" value="${esc(R.filter)}">
-      <div class="cols"><span>Product type</span><span>Quantity</span></div></div>
+      ${segBar()}<div class="cols"><span>Product type</span><span>Quantity</span></div></div>
       <div id="list">${rows.map(qtyRow).join('') || '<p class="muted center" style="text-align:center">Nessun prodotto</p>'}</div><button class="btn ghost" id="addp" style="margin-top:6px">+ Aggiungi prodotto</button></div>
-      <div class="bar"><div class="sum" style="padding:0 4px"><span>Prodotti in frigo: <span class="mint" id="tot">${sumQty(R.q)}</span>${R.total !== '' ? ` <span class="note">(dichiarati ${esc(R.total)})</span>` : ''}</span></div>
+      <div class="bar"><div class="sum" style="padding:0 4px"><span>Inseriti / rimossi: <span id="tot">${totHtml()}</span>${R.total !== '' ? ` <span class="note">(dichiarati ${esc(R.total)})</span>` : ''}</span></div>
       <div class="row2" style="display:flex;gap:10px"><button class="btn ghost" id="res">Riprendi Refill</button><button class="btn mintb" id="end">Fine Refill</button></div></div>`);
     bindQty(); $('#addp').onclick = addSheet;
     $('#sq').oninput = (e) => { R.filter = e.target.value; const p = e.target.selectionStart; drawRefill(); const i = $('#sq'); i.focus(); i.setSelectionRange(p, p); };
     $('#res').onclick = () => { R.phase = 'unlocking'; drawRefill(); api.unlock(f, onDoor); };
   } else if (ph === 'done') {
-    const rows = SKUS.filter((s) => R.q[s.sku]);
+    const rows = SKUS.filter((s) => R.q[s.sku] || R.rm[s.sku]);
     render(`<div class="screen center"><div class="ring">${IC.check}</div><h1><span class="mint">Refill</span> completato</h1><p class="muted">${esc(f.name)}</p>
-      <div class="card" style="width:100%;text-align:left;margin-top:12px">${rows.map((s) => `<div class="sum" style="padding:4px 0"><span>${esc(s.name)}</span><span class="mint">+${R.q[s.sku]}</span></div>`).join('') || '<span class="muted">Nessun prodotto inserito</span>'}
-      <div class="sum" style="border-top:1px solid var(--line);margin-top:6px"><span>Totale</span><span>${sumQty(R.q)}</span></div></div>
+      <div class="card" style="width:100%;text-align:left;margin-top:12px">${rows.map((s) => `<div class="sum" style="padding:4px 0"><span>${esc(s.name)}</span><span>${R.q[s.sku] ? `<span class="mint">+${R.q[s.sku]}</span>` : ''} ${R.rm[s.sku] ? `<span class="neg">−${R.rm[s.sku]}</span>` : ''}</span></div>`).join('') || '<span class="muted">Nessun prodotto inserito</span>'}
+      <div class="sum" style="border-top:1px solid var(--line);margin-top:6px"><span>Totale</span><span>${totHtml()}</span></div></div>
       ${R.photo ? '<p class="note">Foto del frigo allegata</p>' : ''}</div>
       <div class="bar"><button class="btn" id="again">Nuovo refill</button></div>`);
     $('#again').onclick = () => (location.hash = '#/scan');
@@ -234,7 +241,7 @@ function addSheet() {
   const draw = (q = '') => {
     const rows = SKUS.filter((s) => !R.list.includes(s) && (s.name + s.sku + s.cat).toLowerCase().includes(q.toLowerCase())).sort(byName);
     m.querySelector('#alist').innerHTML = rows.map((s) => `<div class="card sku"><img class="pimg" src="${esc(imgOf(s))}" alt=""><div class="pn"><div class="n">${esc(s.name)}</div><div class="c">${s.sku} · ${esc(s.cat)}</div></div><button class="btn" data-a="${s.sku}" style="width:auto;padding:10px 16px">Aggiungi</button></div>`).join('') || '<p class="muted" style="text-align:center">Nessun altro prodotto nel catalogo</p>';
-    m.querySelectorAll('[data-a]').forEach((b) => b.onclick = () => { const s = SKUS.find((x) => x.sku === b.dataset.a); R.list.push(s); R.list.sort(byName); R.q[s.sku] = 0; toast(s.name + ' aggiunto'); draw($('#asq').value); });
+    m.querySelectorAll('[data-a]').forEach((b) => b.onclick = () => { const s = SKUS.find((x) => x.sku === b.dataset.a); R.list.push(s); R.list.sort(byName); R.q[s.sku] = 0; R.rm[s.sku] = 0; toast(s.name + ' aggiunto'); draw($('#asq').value); });
   };
   m.innerHTML = `<div class="card" style="text-align:left;max-height:85vh;display:flex;flex-direction:column"><h2>Aggiungi prodotto</h2><p class="muted small" style="margin:4px 0 10px">Catalogo della dashboard</p>
     <input id="asq" placeholder="Cerca per nome o SKU"><div id="alist" style="overflow:auto;margin:12px 0"></div><button class="btn mintb" id="adone">Fatto</button></div>`;
@@ -248,14 +255,14 @@ function confirmEnd() {
   const door = R.phase === 'unlocking' ? '<b class="blue">La porta non è ancora stata aperta.</b>' : ['opened', 'loading'].includes(R.phase) ? '<b class="mint">La porta è ancora aperta.</b>' : '<b class="blue">La porta è chiusa.</b>';
   const m = document.createElement('div'); m.className = 'modal';
   m.innerHTML = `<div class="card"><h2>Concludere il refill?</h2>
-    <p class="muted">${door}<br>Totale prodotti inseriti: <b>${sumQty(R.q)}</b>.</p>
+    <p class="muted">${door}<br>Inseriti: <b class="mint">${sumQty(R.q)}</b> · Rimossi: <b class="neg">${sumQty(R.rm)}</b>.</p>
     <button class="btn mintb" id="y">Sì, Fine Refill</button><div class="sp"></div><button class="btn text" id="n">No, aggiungi altri prodotti</button></div>`;
   document.body.appendChild(m);
   m.querySelector('#n').onclick = () => { m.remove(); if (['unlocking', 'opened'].includes(R.phase)) setPhase('loading'); };
   const card = m.firstElementChild;
   const finish = async () => {
     card.innerHTML = '<p class="muted" style="margin:12px 0">Chiusura del refill…</p>';
-    const quantities = SKUS.filter((s) => R.q[s.sku]).map((s) => ({ sku: s.sku, qty: R.q[s.sku] }));
+    const quantities = SKUS.filter((s) => R.q[s.sku] || R.rm[s.sku]).map((s) => ({ sku: s.sku, added: R.q[s.sku], removed: R.rm[s.sku] }));
     await api.submitRefill({ fridge: R.fridge, quantities, photo: R.photo });
     m.remove(); setPhase('done');
   };

@@ -80,3 +80,8 @@ label{display:block;margin:14px 0 6px;font-size:13px;color:var(--grey)}
 .seg button.on{background:var(--blue);color:#fff}.seg button.on[data-mode=rm]{background:var(--bad);color:var(--navy)}
 .neg{color:var(--bad)}.qty button.p.neg{background:var(--bad);border-color:var(--bad);color:var(--navy)}
 .tag2{font-size:12px;font-weight:600;color:var(--bad);min-height:0}.tag2 .pos{color:var(--mint)}
+
+.cam-msg{position:absolute;inset:0 0 120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:30px;color:#fff}
+.cam-file{position:absolute;left:20px;right:20px;bottom:130px;display:block;text-align:center;cursor:pointer}
+.vh{position:absolute;opacity:0;width:1px;height:1px;overflow:hidden}
+.scan-n .chip{pointer-events:auto}.scan-n{pointer-events:none}.scan-n.solid{color:var(--grey)}

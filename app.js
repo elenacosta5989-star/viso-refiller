@@ -127,11 +127,12 @@ function codeScreen() {
 }
 async function startCamera(onCode) {
   const ph = $('#ph');
-  const fail = () => { ph.textContent = 'Camera non disponibile.\nUsa "Sblocca con codice".'; ph.classList.add('solid'); };
+  const fail = (e) => { stopCamera(); ph.innerHTML = `${esc(camError(e))}<br>Usa "Sblocca con codice".<br><button class="chip" id="retry" style="margin-top:10px;font-size:13px">Riprova</button>`; ph.classList.add('solid'); const r = $('#retry'); if (r) r.onclick = () => { ph.classList.remove('solid'); startCamera(onCode); }; };
   if (!navigator.mediaDevices) return fail();
+  ph.textContent = 'Consenti l\'accesso alla fotocamera per inquadrare il QR…'; ph.classList.add('solid');
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    const v = $('#vid'); v.srcObject = stream; await v.play();
+    const v = $('#vid'); if (!v) { stopCamera(); return; } v.srcObject = stream; await v.play(); ph.textContent = ''; ph.classList.remove('solid');
     // lettore QR: quello del browser se c'è (Chrome/Android), altrimenti jsQR (Safari/iPhone e altri)
     const native = 'BarcodeDetector' in window ? new BarcodeDetector({ formats: ['qr_code'] }) : null;
     const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
@@ -155,7 +156,7 @@ async function startCamera(onCode) {
       scanRaf = requestAnimationFrame(tick);
     };
     scanRaf = requestAnimationFrame(tick);
-  } catch (e) { fail(); }
+  } catch (e) { fail(e); }
 }
 
 // icone a linea sottile in menta (linguaggio visivo VISO)
@@ -316,26 +317,41 @@ function confirmEnd() {
   m.querySelector('#y').onclick = () => (R.photo ? finish() : photoStep());
 }
 
-// Fotocamera: anteprima live con pulsante di scatto; se la camera non è disponibile (es. anteprima nel browser) usa il selettore foto del telefono
+// Motivo leggibile dell'errore della camera
+const camError = (e) => !window.isSecureContext ? 'La camera funziona solo su un indirizzo sicuro (https).'
+  : e && e.name === 'NotAllowedError' ? 'Permesso negato. Consenti la fotocamera nelle impostazioni del sito, oppure usa il pulsante qui sotto.'
+  : e && e.name === 'NotFoundError' ? 'Nessuna fotocamera trovata su questo dispositivo.'
+  : 'Non riesco ad aprire la fotocamera.';
+
+// Fotocamera: la schermata si apre subito (con Annulla sempre disponibile). Anteprima live con pulsante di scatto;
+// se la camera non parte, un pulsante apre direttamente la fotocamera del telefono.
 function takePhoto() {
-  return new Promise(async (resolve) => {
-    const viaFile = () => {
-      const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.setAttribute('capture', 'environment');
-      i.onchange = async () => resolve(i.files[0] ? await shrink(i.files[0]) : null); i.oncancel = () => resolve(null); i.click();
-    };
-    let st;
-    try { st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }); } catch (e) { return viaFile(); }
+  return new Promise((resolve) => {
+    let st = null, closed = false, tm;
     const o = document.createElement('div'); o.className = 'cam';
-    o.innerHTML = '<video playsinline muted autoplay></video><div class="cam-bar"><button class="btn ghost" id="cx" style="flex:1">Annulla</button><button class="shutter" id="cs" aria-label="Scatta"></button><span style="flex:1"></span></div>';
+    o.innerHTML = `<video playsinline muted autoplay></video>
+      <div class="cam-msg" id="cm"><b>Attendo la fotocamera…</b><span class="small">Se compare la richiesta, tocca "Consenti".</span></div>
+      <label class="btn cam-file" id="cf" hidden>Apri la fotocamera del telefono<input type="file" accept="image/*" capture="environment" class="vh"></label>
+      <div class="cam-bar"><button class="btn ghost" id="cx" style="flex:1">Annulla</button><button class="shutter" id="cs" hidden aria-label="Scatta"></button><span style="flex:1"></span></div>`;
     document.body.appendChild(o);
-    const v = o.querySelector('video'); v.srcObject = st; await v.play().catch(() => {});
-    const done = (r) => { st.getTracks().forEach((t) => t.stop()); o.remove(); resolve(r); };
+    const done = (r) => { closed = true; clearTimeout(tm); if (st) st.getTracks().forEach((t) => t.stop()); o.remove(); resolve(r); };
+    const showFallback = (msg) => { if (msg) o.querySelector('#cm').innerHTML = `<b>${esc(msg)}</b>`; o.querySelector('#cf').hidden = false; };
     o.querySelector('#cx').onclick = () => done(null);
-    o.querySelector('#cs').onclick = () => {
-      const k = Math.min(1, 1024 / Math.max(v.videoWidth, v.videoHeight)), c = document.createElement('canvas');
-      c.width = v.videoWidth * k; c.height = v.videoHeight * k; c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
-      done(c.toDataURL('image/jpeg', 0.7));
-    };
+    o.querySelector('#cf input').onchange = async (e) => { const f = e.target.files[0]; if (f) done(await shrink(f)); };
+    tm = setTimeout(() => showFallback(), 4000); // se la richiesta di permesso resta in attesa, offri comunque l'alternativa
+    (async () => {
+      try {
+        st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        if (closed) { st.getTracks().forEach((t) => t.stop()); return; }
+        clearTimeout(tm); const v = o.querySelector('video'); v.srcObject = st; await v.play().catch(() => {});
+        o.querySelector('#cm').hidden = true; o.querySelector('#cf').hidden = true; o.querySelector('#cs').hidden = false;
+        o.querySelector('#cs').onclick = () => {
+          const k = Math.min(1, 1024 / Math.max(v.videoWidth, v.videoHeight)), c = document.createElement('canvas');
+          c.width = v.videoWidth * k; c.height = v.videoHeight * k; c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+          done(c.toDataURL('image/jpeg', 0.7));
+        };
+      } catch (e) { if (!closed) { clearTimeout(tm); showFallback(camError(e)); } }
+    })();
   });
 }
 

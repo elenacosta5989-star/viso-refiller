@@ -127,19 +127,35 @@ function codeScreen() {
 }
 async function startCamera(onCode) {
   const ph = $('#ph');
-  if (!navigator.mediaDevices || !('BarcodeDetector' in window)) { ph.textContent = 'Scansione con camera non supportata su questo browser.\nUsa "Sblocca con codice".'; ph.classList.add('solid'); return; }
+  const fail = () => { ph.textContent = 'Camera non disponibile.\nUsa "Sblocca con codice".'; ph.classList.add('solid'); };
+  if (!navigator.mediaDevices) return fail();
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     const v = $('#vid'); v.srcObject = stream; await v.play();
-    const det = new BarcodeDetector({ formats: ['qr_code'] });
-    let busy = false;
-    const tick = async () => {
+    // lettore QR: quello del browser se c'è (Chrome/Android), altrimenti jsQR (Safari/iPhone e altri)
+    const native = 'BarcodeDetector' in window ? new BarcodeDetector({ formats: ['qr_code'] }) : null;
+    const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
+    let busy = false, last = 0;
+    const tick = async (t) => {
       if (!stream) return;
-      if (!busy) { busy = true; try { const r = await det.detect(v); if (r[0]) { onCode(r[0].rawValue); return; } } catch (e) { /* frame non pronto */ } busy = false; }
+      if (!busy && t - last > 120 && v.videoWidth) {
+        busy = true; last = t;
+        try {
+          let code = null;
+          if (native) { const r = await native.detect(v); code = r[0] && r[0].rawValue; }
+          else if (window.jsQR) {
+            const k = Math.min(1, 640 / v.videoWidth); cv.width = v.videoWidth * k; cv.height = v.videoHeight * k;
+            cx.drawImage(v, 0, 0, cv.width, cv.height);
+            const q = jsQR(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height); code = q && q.data;
+          }
+          if (code) return onCode(code);
+        } catch (e) { /* frame non pronto */ }
+        busy = false;
+      }
       scanRaf = requestAnimationFrame(tick);
     };
-    tick();
-  } catch (e) { ph.textContent = 'Camera non disponibile.\nUsa "Sblocca con codice".'; ph.classList.add('solid'); }
+    scanRaf = requestAnimationFrame(tick);
+  } catch (e) { fail(); }
 }
 
 // icone a linea sottile in menta (linguaggio visivo VISO)
@@ -160,10 +176,27 @@ function onDoor(ev) {
   if (ev === 'closed' && (R.phase === 'loading' || R.phase === 'opened')) setPhase('info');
 }
 function startRefill(fridge) {
-  R = newRefill(fridge); location.hash = '#/refill'; drawRefill();
+  R = newRefill(fridge); R.locked = true; location.hash = '#/refill'; drawRefill(); // da qui lo sblocco è partito: il refill va concluso
   api.unlock(fridge, onDoor);
 }
-function setPhase(p) { R.phase = p; drawRefill(); }
+function setPhase(p) {
+  R.phase = p;
+  if (p === 'opened') R.locked = true; // da quando la porta si apre non si può più uscire dal refill
+  if (p === 'done') R.locked = false;
+  drawRefill();
+}
+const refillLocked = () => !!(R && R.locked && R.phase !== 'done');
+// messaggio mostrato se si prova a tornare indietro (tasto indietro del telefono o del browser)
+function blockedMsg() {
+  if (document.querySelector('.modal.blocked')) return;
+  const m = document.createElement('div'); m.className = 'modal blocked';
+  m.innerHTML = `<div class="card"><div class="ring" style="width:96px;height:96px;margin:0 auto 14px">${IC.lock}</div>
+    <h2>Attenzione, refill in corso</h2>
+    <p class="muted">Non puoi tornare indietro. Devi prima terminare la procedura: la porta deve essere aperta e poi chiusa, altrimenti il refill rimane in sospeso.<br><br>Concludi con <b class="mint">Fine Refill</b>.</p>
+    <button class="btn" id="ok">Ho capito</button></div>`;
+  document.body.appendChild(m); m.querySelector('#ok').onclick = () => m.remove();
+}
+window.addEventListener('beforeunload', (e) => { if (refillLocked()) { e.preventDefault(); e.returnValue = ''; } });
 const endBtn = '<button class="btn ghost" id="end">Fine Refill</button>';
 
 // totali: inseriti (+) e rimossi (−)
@@ -188,16 +221,16 @@ function drawRefill() {
   const f = R.fridge, ph = R.phase;
   const name = `<p class="muted small" style="margin:0 0 12px">${esc(f.name)} · ${esc(f.site)}</p>`;
   if (ph === 'unlocking') {
-    render(`<div class="screen center">${head()}<div class="ring wait">${IC.door}</div><h2>Apri la porta</h2><p class="muted">Sblocco in corso su<br><b>${esc(f.name)}</b>.<br>Apri il frigorifero.</p></div>
+    render(`<div class="screen center">${head()}<div class="ring wait">${IC.door}</div><h2>Sblocco in corso</h2><p class="muted">Stiamo sbloccando<br><b>${esc(f.name)}</b>.<br>Attendi qualche secondo.</p></div>
       <div class="bar">${endBtn}</div>`);
   } else if (ph === 'opened') {
     render(`<div class="screen center">${head()}<div class="ring">${IC.unlock}</div><span class="status"><i class="dot"></i>PORTA APERTA</span>
-      <h1 style="margin-top:18px">La porta è <span class="mint">aperta</span></h1><p class="muted">Metti i prodotti nel frigo.</p></div>
-      <div class="bar"><button class="btn" id="cont">Inserisci i prodotti</button></div>`);
-    $('#cont').onclick = () => setPhase('loading'); setTimeout(() => R && R.phase === 'opened' && setPhase('loading'), 1600);
+      <h1 style="margin-top:18px">La porta è <span class="mint">aperta</span></h1><p class="muted">Premi il pulsante qui sotto, poi metti o togli i prodotti dal frigo.</p></div>
+      <div class="bar"><button class="btn" id="cont">Aggiungi o rimuovi prodotti</button></div>`);
+    $('#cont').onclick = () => setPhase('loading');
   } else if (ph === 'loading') {
     render(`<div class="screen">${head()}<div class="top"><span class="status"><i class="dot"></i>PORTA APERTA</span><button class="demo" id="sim">DEMO · chiudi porta</button></div>
-      <h1 style="font-size:20px">Metti i prodotti nel frigo, poi seleziona quanti prodotti aggiungi o rimuovi e vai su <span class="mint">Fine Refill</span></h1>${name}
+      <h1 style="font-size:20px">Metti o togli i prodotti dal frigo, poi indica quanti ne hai aggiunti o rimossi e premi <span class="mint">Fine Refill</span></h1>${name}
       ${segBar()}${R.list.map(qtyRow).join('')}<button class="btn ghost" id="addp">+ Aggiungi prodotto</button><div class="sum"><span>Totale pezzi</span><span id="tot">${totHtml()}</span></div></div>
       <div class="bar">${endBtn}</div>`);
     bindQty(); $('#addp').onclick = addSheet; $('#sim').onclick = () => api.simulateDoorClose();
@@ -323,6 +356,7 @@ function shrink(file, max = 1024) {
 function route() {
   clearTimeout(introTimer);
   const p = (location.hash.slice(2) || 'intro').split('/')[0];
+  if (refillLocked() && p !== 'refill') { history.pushState(null, '', '#/refill'); blockedMsg(); return drawRefill(); }
   if (p === 'intro') return introScreen();
   if (!db.user && p !== 'login') return (location.hash = '#/login');
   if (p === 'login') return db.user ? (location.hash = '#/scan') : loginScreen();

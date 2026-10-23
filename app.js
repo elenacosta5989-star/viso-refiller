@@ -23,7 +23,8 @@ const SKUS = [
   { sku: 'VS-4003', name: 'Caffè freddo', cat: 'Bevande' },
   { sku: 'VS-5001', name: 'Barretta proteica', cat: 'Snack' },
 ];
-const DEFAULT_LIST = SKUS.slice(0, 7);
+const byName = (a, b) => a.name.localeCompare(b.name, 'it');
+const DEFAULT_LIST = SKUS.slice(0, 7).sort(byName);
 const imgOf = (s) => s.img || thumb(s.name, s.cat);
 const FRIDGES = [
   { id: 'f1', code: 'TRI4', name: 'Frigo Mensa Piano 1', site: 'Sede Milano' },
@@ -231,9 +232,9 @@ function drawRefill() {
 function addSheet() {
   const m = document.createElement('div'); m.className = 'modal sheetm';
   const draw = (q = '') => {
-    const rows = SKUS.filter((s) => !R.list.includes(s) && (s.name + s.sku + s.cat).toLowerCase().includes(q.toLowerCase()));
+    const rows = SKUS.filter((s) => !R.list.includes(s) && (s.name + s.sku + s.cat).toLowerCase().includes(q.toLowerCase())).sort(byName);
     m.querySelector('#alist').innerHTML = rows.map((s) => `<div class="card sku"><img class="pimg" src="${esc(imgOf(s))}" alt=""><div class="pn"><div class="n">${esc(s.name)}</div><div class="c">${s.sku} · ${esc(s.cat)}</div></div><button class="btn" data-a="${s.sku}" style="width:auto;padding:10px 16px">Aggiungi</button></div>`).join('') || '<p class="muted" style="text-align:center">Nessun altro prodotto nel catalogo</p>';
-    m.querySelectorAll('[data-a]').forEach((b) => b.onclick = () => { const s = SKUS.find((x) => x.sku === b.dataset.a); R.list.push(s); R.q[s.sku] = 0; toast(s.name + ' aggiunto'); draw($('#asq').value); });
+    m.querySelectorAll('[data-a]').forEach((b) => b.onclick = () => { const s = SKUS.find((x) => x.sku === b.dataset.a); R.list.push(s); R.list.sort(byName); R.q[s.sku] = 0; toast(s.name + ' aggiunto'); draw($('#asq').value); });
   };
   m.innerHTML = `<div class="card" style="text-align:left;max-height:85vh;display:flex;flex-direction:column"><h2>Aggiungi prodotto</h2><p class="muted small" style="margin:4px 0 10px">Catalogo della dashboard</p>
     <input id="asq" placeholder="Cerca per nome o SKU"><div id="alist" style="overflow:auto;margin:12px 0"></div><button class="btn mintb" id="adone">Fatto</button></div>`;
